@@ -74,7 +74,7 @@ namespace SimSharp {
         InsertionIndex = _numNodesEverEnqueued++
       };
       _nodes[_numNodes] = node;
-      CascadeUp(_nodes[_numNodes]);
+      CascadeUp(node);
       return node;
     }
     
@@ -93,65 +93,146 @@ namespace SimSharp {
     //Performance appears to be slightly better when this is NOT inlined o_O
     private void CascadeUp(EventQueueNode node) {
       //aka Heapify-up
-      int parent = node.QueueIndex / 2;
-      while (parent >= 1) {
-        EventQueueNode parentNode = _nodes[parent];
+      int parent;
+      if (node.QueueIndex > 1) {
+        parent = node.QueueIndex >> 1;
+        var parentNode = _nodes[parent];
+        if (HasHigherPriority(parentNode, node))
+          return;
+
+        //Node has lower priority value, so move parent down the heap to make room
+        _nodes[node.QueueIndex] = parentNode;
+        parentNode.QueueIndex = node.QueueIndex;
+
+        node.QueueIndex = parent;
+      } else {
+        return;
+      }
+      while (parent > 1) {
+        parent >>= 1;
+        var parentNode = _nodes[parent];
         if (HasHigherPriority(parentNode, node))
           break;
 
-        //Node has lower priority value, so move it up the heap
-        Swap(node, parentNode); //For some reason, this is faster with Swap() rather than (less..?) individual operations, like in CascadeDown()
+        //Node has lower priority value, so move parent down the heap to make room
+        _nodes[node.QueueIndex] = parentNode;
+        parentNode.QueueIndex = node.QueueIndex;
 
-        parent = node.QueueIndex / 2;
+        node.QueueIndex = parent;
       }
+      _nodes[node.QueueIndex] = node;
     }
 
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private void CascadeDown(EventQueueNode node) {
       //aka Heapify-down
-      EventQueueNode newParent;
       int finalQueueIndex = node.QueueIndex;
-      while (true) {
-        newParent = node;
-        int childLeftIndex = 2 * finalQueueIndex;
+      int childLeftIndex = 2 * finalQueueIndex;
 
-        //Check if the left-child is higher-priority than the current node
+      // If leaf node, we're done
+      if (childLeftIndex > _numNodes) {
+        return;
+      }
+
+      // Check if the left-child is higher-priority than the current node
+      int childRightIndex = childLeftIndex + 1;
+      var childLeft = _nodes[childLeftIndex];
+      if (HasHigherPriority(childLeft, node)) {
+        // Check if there is a right child. If not, swap and finish.
+        if (childRightIndex > _numNodes) {
+          node.QueueIndex = childLeftIndex;
+          childLeft.QueueIndex = finalQueueIndex;
+          _nodes[finalQueueIndex] = childLeft;
+          _nodes[childLeftIndex] = node;
+          return;
+        }
+        // Check if the left-child is higher-priority than the right-child
+        var childRight = _nodes[childRightIndex];
+        if (HasHigherPriority(childLeft, childRight)) {
+          // left is highest, move it up and continue
+          childLeft.QueueIndex = finalQueueIndex;
+          _nodes[finalQueueIndex] = childLeft;
+          finalQueueIndex = childLeftIndex;
+        } else {
+          // right is even higher, move it up and continue
+          childRight.QueueIndex = finalQueueIndex;
+          _nodes[finalQueueIndex] = childRight;
+          finalQueueIndex = childRightIndex;
+        }
+      }
+      // Not swapping with left-child, does right-child exist?
+      else if (childRightIndex > _numNodes) {
+        return;
+      } else {
+        // Check if the right-child is higher-priority than the current node
+        var childRight = _nodes[childRightIndex];
+        if (HasHigherPriority(childRight, node)) {
+          childRight.QueueIndex = finalQueueIndex;
+          _nodes[finalQueueIndex] = childRight;
+          finalQueueIndex = childRightIndex;
+        }
+        // Neither child is higher-priority than current, so finish and stop.
+        else {
+          return;
+        }
+      }
+
+      while (true) {
+        childLeftIndex = 2 * finalQueueIndex;
+
+        // If leaf node, we're done
         if (childLeftIndex > _numNodes) {
-          //This could be placed outside the loop, but then we'd have to check newParent != node twice
           node.QueueIndex = finalQueueIndex;
           _nodes[finalQueueIndex] = node;
           break;
         }
 
-        EventQueueNode childLeft = _nodes[childLeftIndex];
-        if (HasHigherPriority(childLeft, newParent)) {
-          newParent = childLeft;
-        }
-
-        //Check if the right-child is higher-priority than either the current node or the left child
-        int childRightIndex = childLeftIndex + 1;
-        if (childRightIndex <= _numNodes) {
-          EventQueueNode childRight = _nodes[childRightIndex];
-          if (HasHigherPriority(childRight, newParent)) {
-            newParent = childRight;
+        // Check if the left-child is higher-priority than the current node
+        childRightIndex = childLeftIndex + 1;
+        childLeft = _nodes[childLeftIndex];
+        if (HasHigherPriority(childLeft, node)) {
+          // Check if there is a right child. If not, swap and finish.
+          if (childRightIndex > _numNodes) {
+            node.QueueIndex = childLeftIndex;
+            childLeft.QueueIndex = finalQueueIndex;
+            _nodes[finalQueueIndex] = childLeft;
+            _nodes[childLeftIndex] = node;
+            break;
+          }
+          // Check if the left-child is higher-priority than the right-child
+          var childRight = _nodes[childRightIndex];
+          if (HasHigherPriority(childLeft, childRight)) {
+            // left is highest, move it up and continue
+            childLeft.QueueIndex = finalQueueIndex;
+            _nodes[finalQueueIndex] = childLeft;
+            finalQueueIndex = childLeftIndex;
+          } else {
+            // right is even higher, move it up and continue
+            childRight.QueueIndex = finalQueueIndex;
+            _nodes[finalQueueIndex] = childRight;
+            finalQueueIndex = childRightIndex;
           }
         }
-
-        //If either of the children has higher (smaller) priority, swap and continue cascading
-        if (newParent != node) {
-          //Move new parent to its new index.  node will be moved once, at the end
-          //Doing it this way is one less assignment operation than calling Swap()
-          _nodes[finalQueueIndex] = newParent;
-
-          int temp = newParent.QueueIndex;
-          newParent.QueueIndex = finalQueueIndex;
-          finalQueueIndex = temp;
-        } else {
-          //See note above
+        // Not swapping with left-child, does right-child exist?
+        else if (childRightIndex > _numNodes) {
           node.QueueIndex = finalQueueIndex;
           _nodes[finalQueueIndex] = node;
           break;
+        } else {
+          // Check if the right-child is higher-priority than the current node
+          var childRight = _nodes[childRightIndex];
+          if (HasHigherPriority(childRight, node)) {
+            childRight.QueueIndex = finalQueueIndex;
+            _nodes[finalQueueIndex] = childRight;
+            finalQueueIndex = childRightIndex;
+          }
+          // Neither child is higher-priority than current, so finish and stop.
+          else {
+            node.QueueIndex = finalQueueIndex;
+            _nodes[finalQueueIndex] = node;
+            break;
+          }
         }
       }
     }
@@ -174,8 +255,23 @@ namespace SimSharp {
     /// Removes the head of the queue (node with highest priority; ties are broken by order of insertion), and returns it.  O(log n)
     /// </summary>
     public EventQueueNode Dequeue() {
-      EventQueueNode returnMe = _nodes[1];
-      Remove(returnMe);
+      var returnMe = _nodes[1];
+      //If the node is already the last node, we can remove it immediately
+      if (_numNodes == 1) {
+        _nodes[1] = null;
+        _numNodes = 0;
+        return returnMe;
+      }
+
+      //Swap the node with the last node
+      var formerLastNode = _nodes[_numNodes];
+      _nodes[1] = formerLastNode;
+      formerLastNode.QueueIndex = 1;
+      _nodes[_numNodes] = null;
+      _numNodes--;
+
+      //Now bubble formerLastNode (which is no longer the last node) down
+      CascadeDown(formerLastNode);
       return returnMe;
     }
 
@@ -203,7 +299,7 @@ namespace SimSharp {
 
     internal void OnNodeUpdated(EventQueueNode node) {
       //Bubble the updated node up or down as appropriate
-      int parentIndex = node.QueueIndex / 2;
+      int parentIndex = node.QueueIndex >> 1;
       EventQueueNode parentNode = _nodes[parentIndex];
 
       if (parentIndex > 0 && HasHigherPriority(node, parentNode)) {
@@ -215,34 +311,36 @@ namespace SimSharp {
     }
 
     /// <summary>
-    /// Removes a node from the queue.  Note that the node does not need to be the head of the queue.  O(log n)
+    /// Removes a node from the queue.  Note that the node does not need to be the head of the queue.  
+    /// If the node is not in the queue, the result is undefined.  If unsure, check Contains() first
+    /// O(log n)
     /// </summary>
     public void Remove(EventQueueNode node) {
+#if DEBUG
+      if (node == null) {
+        throw new ArgumentNullException("node");
+      }
       if (!Contains(node)) {
-        return;
+        throw new InvalidOperationException("Cannot call Remove() on a node which is not enqueued: " + node);
       }
-      if (_numNodes <= 1) {
-        _nodes[1] = null;
-        _numNodes = 0;
+#endif
+
+      //If the node is already the last node, we can remove it immediately
+      if (node.QueueIndex == _numNodes) {
+        _nodes[_numNodes] = null;
+        _numNodes--;
         return;
       }
 
-      //Make sure the node is the last node in the queue
-      bool wasSwapped = false;
-      EventQueueNode formerLastNode = _nodes[_numNodes];
-      if (node.QueueIndex != _numNodes) {
-        //Swap the node with the last node
-        Swap(node, formerLastNode);
-        wasSwapped = true;
-      }
-
+      //Swap the node with the last node
+      var formerLastNode = _nodes[_numNodes];
+      _nodes[node.QueueIndex] = formerLastNode;
+      formerLastNode.QueueIndex = node.QueueIndex;
+      _nodes[_numNodes] = null;
       _numNodes--;
-      _nodes[node.QueueIndex] = null;
 
-      if (wasSwapped) {
-        //Now bubble formerLastNode (which is no longer the last node) up or down as appropriate
-        OnNodeUpdated(formerLastNode);
-      }
+      //Now bubble formerLastNode (which is no longer the last node) up or down as appropriate
+      OnNodeUpdated(formerLastNode);
     }
 
     public IEnumerator<EventQueueNode> GetEnumerator() {
